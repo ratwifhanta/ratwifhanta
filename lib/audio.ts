@@ -100,6 +100,10 @@ export const sfx = {
     setTimeout(() => blip(660, 80, "square", 0.2), 80);
     setTimeout(() => blip(880, 140, "square", 0.22), 160);
   },
+  sneezeReady(): void {
+    blip(660, 40, "triangle", 0.08);
+    setTimeout(() => blip(880, 60, "triangle", 0.08), 35);
+  },
 };
 
 // ----- BACKGROUND CHIPTUNE -----

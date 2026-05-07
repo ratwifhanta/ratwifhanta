@@ -20,6 +20,9 @@ interface Human {
   type: "civilian" | "kid" | "scientist";
   worth: number;
   walkPhase: number;
+  spreadTimer: number;
+  spreadRadius: number;
+  spreadPulsePhase: number;
 }
 
 type EnemyType = "hazmat" | "cop" | "heli" | "boss";
@@ -40,7 +43,7 @@ interface Particle {
   life: number; max: number;
   color: string;
   size: number;
-  kind: "spark" | "trail" | "star";
+  kind: "spark" | "trail" | "star" | "ripple";
 }
 
 interface ScorePopup {
@@ -83,6 +86,7 @@ const WAVE_DURATION = 30000;
 const POWERUP_LIFETIME = 14000;
 const POWERUP_SPAWN_INTERVAL_MIN = 9000;
 const POWERUP_SPAWN_INTERVAL_MAX = 16000;
+const SNEEZE_COOLDOWN = 2700;
 
 interface EnemyConfig {
   size: number;
@@ -125,6 +129,7 @@ export default function Game() {
   const [lbRefresh, setLbRefresh] = useState(0);
   const [waveNumber, setWaveNumber] = useState(1);
   const [activeBuffs, setActiveBuffs] = useState<ActiveBuff[]>([]);
+  const [endStats, setEndStats] = useState({ infected: 0, longestCombo: 0, waves: 0 });
 
   const phaseRef = useRef<Phase>("handle");
   const scoreRef = useRef(0);
@@ -158,6 +163,15 @@ export default function Game() {
   const nextPowerSpawnDelayRef = useRef(POWERUP_SPAWN_INTERVAL_MIN);
   const sneezeBurstRef = useRef<{ until: number; angle: number } | null>(null);
   const endGameRef = useRef<() => void>(() => {});
+  const ratVelRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 });
+  const ratTargetFacingRef = useRef(0);
+  const shakeOffsetRef = useRef({ x: 0, y: 0 });
+  const sneezeCooldownStartRef = useRef(-SNEEZE_COOLDOWN);
+  const prevSneezeFracRef = useRef(1);
+  const firstPowerUpGivenRef = useRef(false);
+  const totalInfectedRef = useRef(0);
+  const longestComboRef = useRef(0);
+  const wavesCompletedRef = useRef(0);
 
   // Load handle on mount
   useEffect(() => {
@@ -199,30 +213,39 @@ export default function Game() {
     const streetW = 70;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
+        // Skip center 2×3 blocks — this is the central plaza
+        if (c >= 2 && c <= 3 && r >= 1 && r <= 3) continue;
         const bx = c * blockW + streetW;
         const by = r * blockH + streetW;
         const bw = blockW - streetW * 2;
         const bh = blockH - streetW * 2;
         if (Math.random() < 0.4 && bw > 200) {
           const split = Math.random() * 0.4 + 0.3;
-          buildings.push(makeBuilding(bx, by, bw * split - 10, bh));
-          buildings.push(makeBuilding(bx + bw * split + 10, by, bw * (1 - split) - 10, bh));
+          buildings.push(makeBuilding(bx, by, bw * split - 10, bh, c, r));
+          buildings.push(makeBuilding(bx + bw * split + 10, by, bw * (1 - split) - 10, bh, c, r));
         } else if (Math.random() < 0.4 && bh > 200) {
           const split = Math.random() * 0.4 + 0.3;
-          buildings.push(makeBuilding(bx, by, bw, bh * split - 10));
-          buildings.push(makeBuilding(bx, by + bh * split + 10, bw, bh * (1 - split) - 10));
+          buildings.push(makeBuilding(bx, by, bw, bh * split - 10, c, r));
+          buildings.push(makeBuilding(bx, by + bh * split + 10, bw, bh * (1 - split) - 10, c, r));
         } else {
-          buildings.push(makeBuilding(bx, by, bw, bh));
+          buildings.push(makeBuilding(bx, by, bw, bh, c, r));
         }
       }
     }
+    // Chokepoint buildings — narrow passages between plaza and outer zones
+    buildings.push(makeBuilding(WORLD_W / 2 + 160, 0, 120, 280, 3, 0));
+    buildings.push(makeBuilding(WORLD_W / 2 - 280, 0, 120, 280, 2, 0));
+    buildings.push(makeBuilding(WORLD_W / 2 - 180, WORLD_H - 260, 140, 200, 2, 4));
+    buildings.push(makeBuilding(WORLD_W / 2 + 40, WORLD_H - 260, 140, 200, 3, 4));
+
     buildingsRef.current = buildings;
     ratRef.current = { x: WORLD_W / 2, y: WORLD_H / 2, facing: 0 };
 
     const humans: Human[] = [];
-    while (humans.length < 26) {
-      const x = Math.random() * (WORLD_W - 100) + 50;
-      const y = Math.random() * (WORLD_H - 100) + 50;
+    while (humans.length < 28) {
+      const inPlaza = Math.random() < 0.60;
+      const x = inPlaza ? 800 + Math.random() * 800 : Math.random() * (WORLD_W - 100) + 50;
+      const y = inPlaza ? 360 + Math.random() * 1080 : Math.random() * (WORLD_H - 100) + 50;
       if (!collidesAnyBuilding(x, y, HUMAN_SIZE, buildings)) humans.push(makeHuman(x, y));
     }
     humansRef.current = humans;
@@ -253,11 +276,19 @@ export default function Game() {
     setWaveNumber(1);
     waveAnnounceTextRef.current = "WAVE 1 · the lab is leaking";
     waveAnnounceUntilRef.current = performance.now() + 2400;
-    lastPowerSpawnRef.current = performance.now() + 6000;
+    lastPowerSpawnRef.current = performance.now() + 5000 + Math.random() * 3000;
     nextPowerSpawnDelayRef.current = POWERUP_SPAWN_INTERVAL_MIN;
     screenShakeRef.current = 0;
+    shakeOffsetRef.current = { x: 0, y: 0 };
     screenFlashRef.current = { color: "#fff", alpha: 0 };
     sneezeBurstRef.current = null;
+    sneezeCooldownStartRef.current = -SNEEZE_COOLDOWN;
+    prevSneezeFracRef.current = 1;
+    firstPowerUpGivenRef.current = false;
+    totalInfectedRef.current = 0;
+    longestComboRef.current = 0;
+    wavesCompletedRef.current = 0;
+    ratVelRef.current = { vx: 0, vy: 0 };
     phaseRef.current = "howtoplay";
     setPhase("howtoplay");
   }, [seedWorld, savedHandle]);
@@ -291,6 +322,11 @@ export default function Game() {
     screenShakeRef.current = 22;
     screenFlashRef.current = { color: "#DC2626", alpha: 0.5 };
     const finalScore = scoreRef.current;
+    setEndStats({
+      infected: totalInfectedRef.current,
+      longestCombo: longestComboRef.current,
+      waves: wavesCompletedRef.current,
+    });
     if (savedHandle) submitToLeaderboard(savedHandle, finalScore);
   }, [submitToLeaderboard, savedHandle]);
   endGameRef.current = endGame;
@@ -347,12 +383,15 @@ export default function Game() {
     };
   }, []);
 
-  // Sneeze on space (when playing)
+  // Sneeze on space (when playing) — gated by cooldown
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === " " && phaseRef.current === "playing") {
         e.preventDefault();
-        triggerSneeze();
+        if (performance.now() - sneezeCooldownStartRef.current >= SNEEZE_COOLDOWN) {
+          sneezeCooldownStartRef.current = performance.now();
+          triggerSneeze();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -446,6 +485,8 @@ export default function Game() {
   function infectHuman(h: Human): void {
     const now = performance.now();
     h.infected = true;
+    h.spreadTimer = 3.5;
+    totalInfectedRef.current += 1;
     const sinceLast = now - lastInfectRef.current;
     if (sinceLast < COMBO_WINDOW) {
       comboRef.current += 1;
@@ -454,12 +495,18 @@ export default function Game() {
       comboRef.current = 1;
       sfx.infect();
     }
+    longestComboRef.current = Math.max(longestComboRef.current, comboRef.current);
     setCombo(comboRef.current);
     lastInfectRef.current = now;
     const basePoints = 10 * h.worth;
     const points = basePoints * Math.max(1, comboRef.current);
     scoreRef.current += points;
     setScore(scoreRef.current);
+    // Ripple particle on infection
+    particlesRef.current.push({
+      x: h.x, y: h.y, vx: 0, vy: 0,
+      life: 0, max: 0.6, color: "#78DC28", size: 8, kind: "ripple",
+    });
 
     // Score popup
     popupsRef.current.push({
@@ -497,6 +544,7 @@ export default function Game() {
     // Wave system
     const elapsedSinceWave = now - waveStartedAtRef.current;
     if (elapsedSinceWave > WAVE_DURATION) {
+      wavesCompletedRef.current = waveNumRef.current;
       waveNumRef.current += 1;
       waveStartedAtRef.current = now;
       const wn = waveNumRef.current;
@@ -534,13 +582,20 @@ export default function Game() {
     const rat = ratRef.current;
     const buildings = buildingsRef.current;
     const speedMult = hasBuff("speed") ? 1.65 : 1.0;
-    const dx = ix * RAT_SPEED * speedMult * dt;
-    const dy = iy * RAT_SPEED * speedMult * dt;
+    const targetVx = ix * RAT_SPEED * speedMult;
+    const targetVy = iy * RAT_SPEED * speedMult;
+    const lerpFactor = mag > 0.1 ? 12 : 8;
+    ratVelRef.current.vx += (targetVx - ratVelRef.current.vx) * Math.min(1, lerpFactor * dt);
+    ratVelRef.current.vy += (targetVy - ratVelRef.current.vy) * Math.min(1, lerpFactor * dt);
+    const dx = ratVelRef.current.vx * dt;
+    const dy = ratVelRef.current.vy * dt;
     if (dx !== 0 && !collidesAnyBuilding(rat.x + dx, rat.y, RAT_SIZE / 2, buildings)) rat.x += dx;
     if (dy !== 0 && !collidesAnyBuilding(rat.x, rat.y + dy, RAT_SIZE / 2, buildings)) rat.y += dy;
     rat.x = Math.max(20, Math.min(WORLD_W - 20, rat.x));
     rat.y = Math.max(20, Math.min(WORLD_H - 20, rat.y));
-    if (mag > 0.1) rat.facing = Math.atan2(iy, ix);
+    if (mag > 0.1) ratTargetFacingRef.current = Math.atan2(iy, ix);
+    const angleDelta = angleDiff(ratTargetFacingRef.current, rat.facing);
+    rat.facing += angleDelta * Math.min(1, 16 * dt);
 
     // Trail particles
     if (Math.random() < 0.55) {
@@ -574,7 +629,9 @@ export default function Game() {
     // Power-up spawning
     if (now - lastPowerSpawnRef.current > nextPowerSpawnDelayRef.current && powerUpsRef.current.length < 3) {
       const types: PowerUpType[] = ["speed", "sneeze", "magnet", "invincible"];
-      const type = types[Math.floor(Math.random() * types.length)];
+      const type: PowerUpType = !firstPowerUpGivenRef.current
+        ? (firstPowerUpGivenRef.current = true, "speed")
+        : types[Math.floor(Math.random() * types.length)];
       let attempts = 0;
       while (attempts++ < 20) {
         const x = Math.random() * (WORLD_W - 200) + 100;
@@ -653,18 +710,37 @@ export default function Game() {
       h.walkPhase += dt * spd * 0.08;
     }
 
+    // Chain infection spread — infected humans spread to nearby uninfected
+    for (const carrier of humans) {
+      if (!carrier.infected) continue;
+      carrier.spreadTimer -= dt;
+      carrier.spreadPulsePhase += dt * 2.2;
+      if (carrier.spreadTimer > 0) continue;
+      for (const target of humans) {
+        if (target.infected) continue;
+        const csdx = target.x - carrier.x;
+        const csdy = target.y - carrier.y;
+        if (csdx * csdx + csdy * csdy < carrier.spreadRadius * carrier.spreadRadius) {
+          infectHuman(target);
+          carrier.spreadTimer = 1.2;
+          break;
+        }
+      }
+    }
+
     if (comboRef.current > 0 && now - lastInfectRef.current > COMBO_WINDOW) {
       comboRef.current = 0;
       setCombo(0);
     }
 
     // Spawn humans up to a wave-scaled cap
-    const humanCap = 26 + (wave - 1) * 4;
+    const humanCap = 28 + (wave - 1) * 5;
     if (humans.length < humanCap && Math.random() < 0.012) {
       let attempts = 0;
       while (attempts++ < 10) {
-        const x = Math.random() * (WORLD_W - 100) + 50;
-        const y = Math.random() * (WORLD_H - 100) + 50;
+        const inPlaza = Math.random() < 0.60;
+        const x = inPlaza ? 800 + Math.random() * 800 : Math.random() * (WORLD_W - 100) + 50;
+        const y = inPlaza ? 360 + Math.random() * 1080 : Math.random() * (WORLD_H - 100) + 50;
         if (Math.hypot(x - rat.x, y - rat.y) > 250 && !collidesAnyBuilding(x, y, HUMAN_SIZE, buildings)) {
           humans.push(makeHuman(x, y));
           break;
@@ -677,7 +753,8 @@ export default function Game() {
     const baseDesired = 1 + Math.floor(wave / 1.5) + Math.floor(scoreRef.current / 350);
     const maxCount = Math.min(baseDesired, 2 + wave * 2);
     const spawnDelay = Math.max(2200, 16000 - elapsed * 0.32 - wave * 600);
-    if (enemiesRef.current.length < maxCount && elapsed > 4000 && now - lastEnemySpawnRef.current > spawnDelay) {
+    const enemyGraceEnd = wave === 1 ? 22000 : 4000;
+    if (enemiesRef.current.length < maxCount && elapsed > enemyGraceEnd && now - lastEnemySpawnRef.current > spawnDelay) {
       const type = pickEnemyType(wave, scoreRef.current);
       const cfg = ENEMY_CONFIG[type];
       const side = Math.floor(Math.random() * 4);
@@ -734,6 +811,11 @@ export default function Game() {
       }
     }
 
+    // Sneeze cooldown ready chime
+    const curSneezeFrac = Math.min(1, (now - sneezeCooldownStartRef.current) / SNEEZE_COOLDOWN);
+    if (prevSneezeFracRef.current < 1 && curSneezeFrac >= 1) sfx.sneezeReady();
+    prevSneezeFracRef.current = curSneezeFrac;
+
     // Camera
     const cam = cameraRef.current;
     const canvas = canvasRef.current!;
@@ -745,7 +827,16 @@ export default function Game() {
     cam.x = Math.max(0, Math.min(WORLD_W - cssW, cam.x));
     cam.y = Math.max(0, Math.min(WORLD_H - cssH, cam.y));
 
-    if (screenShakeRef.current > 0) screenShakeRef.current -= dt * 30;
+    // Screen shake — exponential decay
+    if (screenShakeRef.current > 0.5) {
+      shakeOffsetRef.current.x = (Math.random() - 0.5) * screenShakeRef.current;
+      shakeOffsetRef.current.y = (Math.random() - 0.5) * screenShakeRef.current;
+      screenShakeRef.current *= Math.pow(0.04, dt);
+    } else {
+      shakeOffsetRef.current.x *= 0.82;
+      shakeOffsetRef.current.y *= 0.82;
+      screenShakeRef.current = 0;
+    }
     if (screenFlashRef.current.alpha > 0) screenFlashRef.current.alpha -= dt * 1.4;
   }
 
@@ -758,11 +849,8 @@ export default function Game() {
     ctx.fillRect(0, 0, cssW, cssH);
 
     const cam = cameraRef.current;
-    let shakeX = 0, shakeY = 0;
-    if (screenShakeRef.current > 0) {
-      shakeX = (Math.random() - 0.5) * screenShakeRef.current;
-      shakeY = (Math.random() - 0.5) * screenShakeRef.current;
-    }
+    const shakeX = shakeOffsetRef.current.x;
+    const shakeY = shakeOffsetRef.current.y;
     ctx.save();
     ctx.translate(-cam.x + shakeX, -cam.y + shakeY);
 
@@ -808,16 +896,51 @@ export default function Game() {
       }
     }
 
+    // Central plaza — open tiled area
+    const plazaX = 2 * blockW, plazaY = 1 * blockH;
+    const plazaW = 2 * blockW, plazaH = 3 * blockH;
+    ctx.fillStyle = "#524840";
+    ctx.fillRect(plazaX, plazaY, plazaW, plazaH);
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    for (let px = plazaX; px < plazaX + plazaW; px += 60) {
+      ctx.beginPath(); ctx.moveTo(px, plazaY); ctx.lineTo(px, plazaY + plazaH); ctx.stroke();
+    }
+    for (let py = plazaY; py < plazaY + plazaH; py += 60) {
+      ctx.beginPath(); ctx.moveTo(plazaX, py); ctx.lineTo(plazaX + plazaW, py); ctx.stroke();
+    }
+    // Fountain landmark in exact center
+    ctx.beginPath();
+    ctx.arc(WORLD_W / 2, WORLD_H / 2, 55, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(100,180,220,0.35)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(WORLD_W / 2, WORLD_H / 2, 55, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(100,180,220,0.08)";
+    ctx.fill();
+
     for (const b of buildingsRef.current) drawBuilding(ctx, b);
 
     // Particles (trails behind everything)
     for (const p of particlesRef.current) {
-      const a = 1 - p.life / p.max;
-      ctx.globalAlpha = a;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
+      if (p.kind === "ripple") {
+        const progress = p.life / p.max;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size + progress * 55, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(120,220,40,${(1 - progress) * 0.7})`;
+        ctx.lineWidth = 2.5 * (1 - progress);
+        ctx.setLineDash([]);
+        ctx.stroke();
+      } else {
+        const a = 1 - p.life / p.max;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
 
@@ -853,17 +976,43 @@ export default function Game() {
     drawRat(ctx, ratRef.current.x, ratRef.current.y, ratRef.current.facing,
       hasBuff("invincible"), hasBuff("speed"));
 
-    // Infection radius
+    // Infection radius — solid glow ring (no dashes)
+    const magnetActive = hasBuff("magnet");
     ctx.beginPath();
     ctx.arc(ratRef.current.x, ratRef.current.y, INFECT_RADIUS, 0, Math.PI * 2);
-    ctx.strokeStyle = hasBuff("magnet") ? "rgba(216, 72, 138, 0.5)" : "rgba(216, 72, 138, 0.35)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 6]);
-    ctx.stroke();
+    ctx.strokeStyle = magnetActive ? "rgba(216,72,138,0.55)" : "rgba(216,72,138,0.28)";
+    ctx.lineWidth = magnetActive ? 3 : 2;
     ctx.setLineDash([]);
+    ctx.stroke();
+    // Soft outer glow
+    const glowGrad = ctx.createRadialGradient(
+      ratRef.current.x, ratRef.current.y, INFECT_RADIUS - 4,
+      ratRef.current.x, ratRef.current.y, INFECT_RADIUS + 14
+    );
+    glowGrad.addColorStop(0, `rgba(216,72,138,${magnetActive ? 0.18 : 0.10})`);
+    glowGrad.addColorStop(1, "rgba(216,72,138,0)");
+    ctx.beginPath();
+    ctx.arc(ratRef.current.x, ratRef.current.y, INFECT_RADIUS + 14, 0, Math.PI * 2);
+    ctx.fillStyle = glowGrad;
+    ctx.fill();
+
+    // Sneeze cooldown arc around rat
+    const bnowArc = performance.now();
+    const cooldownFrac = Math.min(1, (bnowArc - sneezeCooldownStartRef.current) / SNEEZE_COOLDOWN);
+    if (cooldownFrac < 1) {
+      ctx.beginPath();
+      ctx.arc(ratRef.current.x, ratRef.current.y, INFECT_RADIUS + 18,
+        -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownFrac);
+      ctx.strokeStyle = "rgba(240,138,60,0.75)";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.setLineDash([]);
+      ctx.stroke();
+      ctx.lineCap = "butt";
+    }
 
     // Magnet aura
-    if (hasBuff("magnet")) {
+    if (magnetActive) {
       ctx.beginPath();
       ctx.arc(ratRef.current.x, ratRef.current.y, 320, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(216, 72, 138, 0.18)";
@@ -901,33 +1050,44 @@ export default function Game() {
     // ---- HUD ----
     if (phaseRef.current === "playing") {
       const padX = 18, top = 14;
+      const bnow = performance.now();
 
-      // Score
-      ctx.fillStyle = "rgba(27, 18, 8, 0.85)";
-      roundRect(ctx, padX, top, 240, 70, 14);
+      // Score box — 280×80 with left accent bar
+      ctx.fillStyle = "rgba(27,18,8,0.92)";
+      roundRect(ctx, padX, top, 280, 80, 16);
       ctx.fill();
-      ctx.fillStyle = "#F0E7D4";
-      ctx.font = "700 13px 'Nunito', sans-serif";
-      ctx.fillText("INFECTED", padX + 16, top + 22);
-      ctx.font = "900 36px 'Permanent Marker', cursive";
-      ctx.fillStyle = "#F08A3C";
-      ctx.fillText(String(scoreRef.current), padX + 16, top + 56);
+      ctx.fillStyle = "#D8488A";
+      roundRect(ctx, padX, top, 6, 80, 3);
+      ctx.fill();
 
-      // Combo
+      ctx.fillStyle = "rgba(240,231,212,0.55)";
+      ctx.font = "700 11px 'Nunito', sans-serif";
+      ctx.letterSpacing = "0.1em";
+      ctx.fillText("INFECTED", padX + 18, top + 18);
+      ctx.letterSpacing = "0em";
+
+      ctx.font = "900 44px 'Permanent Marker', cursive";
+      ctx.fillStyle = "#F08A3C";
+      const scoreStr = String(scoreRef.current);
+      ctx.fillText(scoreStr, padX + 18, top + 66);
+
+      // Combo badge inside score box
       if (comboRef.current >= 2) {
+        const scoreW = ctx.measureText(scoreStr).width;
+        const comboX = padX + 18 + scoreW + 10;
         ctx.fillStyle = "#D8488A";
-        roundRect(ctx, padX + 130, top + 12, 100, 32, 8);
+        roundRect(ctx, comboX, top + 44, 78, 26, 6);
         ctx.fill();
         ctx.fillStyle = "#fff";
-        ctx.font = "900 16px 'Permanent Marker', cursive";
+        ctx.font = "900 13px 'Permanent Marker', cursive";
         ctx.textAlign = "center";
-        ctx.fillText("x" + comboRef.current + " COMBO", padX + 180, top + 33);
+        ctx.fillText("x" + comboRef.current, comboX + 39, top + 61);
         ctx.textAlign = "left";
       }
 
-      // Wave indicator
-      ctx.fillStyle = "rgba(27, 18, 8, 0.85)";
-      const wW = 170;
+      // Wave indicator — top center
+      ctx.fillStyle = "rgba(27,18,8,0.85)";
+      const wW = 150;
       roundRect(ctx, cssW / 2 - wW / 2, top, wW, 50, 12);
       ctx.fill();
       ctx.fillStyle = "#F0E7D4";
@@ -939,27 +1099,33 @@ export default function Game() {
       ctx.fillText(String(waveNumRef.current), cssW / 2, top + 42);
       ctx.textAlign = "left";
 
-      // Active buffs
+      // Active buffs — progress bars top-right
       const bx = cssW - 18;
       let by = top + 8;
-      const bnow = performance.now();
       for (const b of activeBuffsRef.current) {
-        const remain = Math.max(0, (b.expiresAt - bnow) / 1000);
-        const w = 140, h = 36;
-        ctx.fillStyle = POWERUP_COLORS[b.type];
-        roundRect(ctx, bx - w, by, w, h, 8);
+        const totalDur = b.type === "invincible" ? 4000 : 5000;
+        const frac = Math.max(0, (b.expiresAt - bnow) / totalDur);
+        const bw = 130, bh = 38;
+        ctx.fillStyle = "rgba(27,18,8,0.88)";
+        roundRect(ctx, bx - bw, by, bw, bh, 8);
         ctx.fill();
-        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        // Progress bar
+        ctx.fillStyle = POWERUP_COLORS[b.type];
+        if (frac > 0) {
+          roundRect(ctx, bx - bw + 4, by + bh - 10, (bw - 8) * frac, 6, 3);
+          ctx.fill();
+        }
+        ctx.fillStyle = POWERUP_COLORS[b.type];
         ctx.font = "900 13px 'Permanent Marker', cursive";
         ctx.textAlign = "right";
-        ctx.fillText(POWERUP_LABELS[b.type] + ` ${remain.toFixed(1)}s`, bx - 12, by + 23);
-        by += h + 6;
+        ctx.fillText(POWERUP_LABELS[b.type], bx - 10, by + 22);
+        ctx.textAlign = "left";
+        by += bh + 5;
       }
-      ctx.textAlign = "left";
 
       // Wave announcement
-      if (waveAnnounceUntilRef.current > performance.now()) {
-        const left = (waveAnnounceUntilRef.current - performance.now()) / 2400;
+      if (waveAnnounceUntilRef.current > bnow) {
+        const left = (waveAnnounceUntilRef.current - bnow) / 2400;
         ctx.globalAlpha = Math.min(1, left * 2);
         ctx.fillStyle = "rgba(0,0,0,0.7)";
         ctx.fillRect(0, cssH / 2 - 60, cssW, 120);
@@ -971,15 +1137,18 @@ export default function Game() {
         ctx.textAlign = "left";
       }
 
-      // Sneeze hint
-      if (waveNumRef.current === 1 && performance.now() - startedAtRef.current < 8000) {
+      // Sneeze hint — show during wave 1 for first 20s
+      if (waveNumRef.current === 1 && bnow - startedAtRef.current < 20000) {
+        const hintAlpha = Math.min(1, (20000 - (bnow - startedAtRef.current)) / 3000);
+        ctx.globalAlpha = hintAlpha;
         ctx.fillStyle = "rgba(27,18,8,0.7)";
-        roundRect(ctx, cssW / 2 - 110, cssH - 60, 220, 40, 10);
+        roundRect(ctx, cssW / 2 - 130, cssH - 62, 260, 42, 10);
         ctx.fill();
         ctx.fillStyle = "#F0E7D4";
         ctx.font = "700 13px 'Nunito', sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("press SPACE to sneeze", cssW / 2, cssH - 35);
+        ctx.fillText("SPACE to sneeze · infect crowds for chain reactions", cssW / 2, cssH - 37);
+        ctx.globalAlpha = 1;
         ctx.textAlign = "left";
       }
     }
@@ -1057,71 +1226,46 @@ export default function Game() {
       )}
 
       {phase === "howtoplay" && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-start bg-[#1B1208]/95 backdrop-blur-sm overflow-y-auto py-8 px-4">
-          <h2 className="font-graffiti text-4xl md:text-6xl text-[#F0E7D4] text-center mt-4">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#1B1208]/95 backdrop-blur-sm px-4">
+          <h2 className="font-graffiti text-4xl md:text-5xl text-[#F0E7D4] text-center">
             how to <span className="text-[#D8488A]">spread</span>
           </h2>
-          <p className="text-[#F0E7D4]/60 text-sm mt-1">everything you need to know</p>
 
-          <div className="mt-8 w-full max-w-lg grid grid-cols-1 gap-4">
-            {/* Controls */}
-            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
-              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">🎮 controls</p>
-              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">WASD / ↑↓←→</span>
-                  <span>move the rat</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">SPACE</span>
-                  <span>sneeze — cone blast that infects humans in range</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">drag</span>
-                  <span>mobile movement (touch joystick)</span>
-                </div>
+          <div className="mt-8 w-full max-w-lg grid grid-cols-1 gap-3">
+            <div className="flex items-center gap-5 bg-[#F0E7D4]/[0.08] rounded-2xl border border-[#F0E7D4]/15 p-4">
+              <span className="text-5xl flex-shrink-0">🐀</span>
+              <div>
+                <p className="font-graffiti text-lg text-[#F08A3C]">move &amp; infect</p>
+                <p className="text-[#F0E7D4]/70 text-sm mt-0.5">
+                  Brush past humans to infect them — infected people spread the virus to their neighbours. Chain reactions score big.
+                </p>
               </div>
             </div>
-
-            {/* Scoring */}
-            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
-              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">📊 scoring</p>
-              <div className="flex flex-col gap-1 text-[#F0E7D4]/80 text-sm">
-                <div className="flex justify-between"><span>🧍 civilian</span><span className="font-graffiti text-[#F08A3C]">+1</span></div>
-                <div className="flex justify-between"><span>👶 kid</span><span className="font-graffiti text-[#F08A3C]">+2</span></div>
-                <div className="flex justify-between"><span>🥼 scientist</span><span className="font-graffiti text-[#F08A3C]">+3</span></div>
-                <p className="text-[#D8488A] mt-2 text-xs">infect multiple people within 1.5s to build a COMBO multiplier!</p>
+            <div className="flex items-center gap-5 bg-[#F0E7D4]/[0.08] rounded-2xl border border-[#F0E7D4]/15 p-4">
+              <span className="text-5xl flex-shrink-0">💨</span>
+              <div>
+                <p className="font-graffiti text-lg text-[#F08A3C]">SPACE to sneeze</p>
+                <p className="text-[#F0E7D4]/70 text-sm mt-0.5">
+                  Blasts a cone of contagion forward. 2.7 second cooldown — aim before you fire.
+                </p>
               </div>
             </div>
-
-            {/* Power-ups */}
-            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
-              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">⚡ power-ups</p>
-              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
-                <div className="flex items-start gap-2"><span className="text-[#22D3EE]">⚡ SPEED</span><span className="text-[#F0E7D4]/60">(5s) — 65% speed boost</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#F08A3C]">💥 BURST</span><span className="text-[#F0E7D4]/60">instant wide-radius infection blast</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#D8488A]">🧲 MAGNET</span><span className="text-[#F0E7D4]/60">(5s) — humans walk toward you</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#FBBF24]">★ INVINC</span><span className="text-[#F0E7D4]/60">(4s) — enemies can&apos;t catch you</span></div>
-              </div>
-            </div>
-
-            {/* Enemies */}
-            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
-              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">☠️ enemies</p>
-              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
-                <div className="flex items-start gap-2"><span className="text-[#F1C40F]">🟡 hazmat</span><span className="text-[#F0E7D4]/60">slow, predictable — always present</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#1E40AF]">🔵 cop</span><span className="text-[#F0E7D4]/60">fast straight-line chase — wave 2+</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#16A34A]">🟢 helicopter</span><span className="text-[#F0E7D4]/60">ignores buildings — wave 3+</span></div>
-                <div className="flex items-start gap-2"><span className="text-[#DC2626]">🔴 BOSS</span><span className="text-[#F0E7D4]/60">huge &amp; slow — score 1500+</span></div>
+            <div className="flex items-center gap-5 bg-[#F0E7D4]/[0.08] rounded-2xl border border-[#F0E7D4]/15 p-4">
+              <span className="text-5xl flex-shrink-0">⚠️</span>
+              <div>
+                <p className="font-graffiti text-lg text-[#F08A3C]">don&apos;t get caught</p>
+                <p className="text-[#F0E7D4]/70 text-sm mt-0.5">
+                  Hazmat suits, cops, and helicopters close in each wave. Grab glowing pick-ups for speed, bursts, and shields.
+                </p>
               </div>
             </div>
           </div>
 
           <button
             onClick={startPlaying}
-            className="mt-8 mb-4 font-graffiti text-3xl md:text-4xl px-14 py-5 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] hover:scale-105 transition-all border-4 border-[#F0E7D4] animate-pulse-glow"
+            className="mt-8 font-graffiti text-3xl md:text-4xl px-14 py-5 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] hover:scale-105 transition-all border-4 border-[#F0E7D4] animate-pulse-glow"
           >
-            ✓ Ready!
+            ▶ Let&apos;s go
           </button>
         </div>
       )}
@@ -1161,32 +1305,47 @@ export default function Game() {
 
       {phase === "gameover" && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start bg-[#1B1208]/90 backdrop-blur-sm overflow-y-auto py-8 px-4">
-          <p className="font-graffiti text-2xl md:text-3xl text-[#F08A3C] mt-4">caught.</p>
-          <h2 className="font-graffiti text-5xl md:text-7xl text-[#F0E7D4] text-center leading-none mt-1">
-            you spread<br />
-            <span className="text-[#D8488A]">{score.toLocaleString()}</span>
+          <p className="font-graffiti text-2xl text-[#F08A3C] mt-4">caught.</p>
+          <h2 className="font-graffiti text-6xl md:text-8xl text-[#D8488A] mt-1 tabular-nums">
+            {score.toLocaleString()}
           </h2>
-          <p className="text-[#F0E7D4]/70 mt-2 text-base">infections · wave {waveNumber}</p>
+          <p className="text-[#F0E7D4]/60 text-sm">infections</p>
+
+          {/* Stats row */}
+          <div className="mt-6 flex gap-6 text-center">
+            <div>
+              <p className="font-graffiti text-2xl text-[#F0E7D4]">{endStats.infected}</p>
+              <p className="text-[#F0E7D4]/50 text-xs uppercase tracking-widest">humans infected</p>
+            </div>
+            <div className="border-l border-[#F0E7D4]/20" />
+            <div>
+              <p className="font-graffiti text-2xl text-[#F0E7D4]">x{endStats.longestCombo}</p>
+              <p className="text-[#F0E7D4]/50 text-xs uppercase tracking-widest">best combo</p>
+            </div>
+            <div className="border-l border-[#F0E7D4]/20" />
+            <div>
+              <p className="font-graffiti text-2xl text-[#F0E7D4]">{endStats.waves}</p>
+              <p className="text-[#F0E7D4]/50 text-xs uppercase tracking-widest">waves survived</p>
+            </div>
+          </div>
 
           {submitting && (
-            <p className="text-[#F0E7D4]/60 mt-3 text-sm">submitting score...</p>
+            <p className="text-[#F0E7D4]/50 mt-4 text-sm animate-pulse">submitting...</p>
           )}
-          {submitResult && (
-            <div className="mt-3 text-center">
-              {submitResult.rank && submitResult.rank <= 3 && (
-                <p className="font-graffiti text-2xl text-[#F08A3C] animate-pulse">
-                  {submitResult.rank === 1 ? "🥇 #1" : submitResult.rank === 2 ? "🥈 #2" : "🥉 #3"} on the board!
-                </p>
-              )}
-              {submitResult.rank && submitResult.rank > 3 && (
-                <p className="text-[#F0E7D4]/80 text-base">
-                  global rank: <span className="font-graffiti text-[#F08A3C]">#{submitResult.rank}</span>
-                  {submitResult.best > score && (
-                    <span className="text-[#F0E7D4]/50"> · your best: {submitResult.best.toLocaleString()}</span>
-                  )}
-                </p>
-              )}
+          {submitResult && submitResult.rank && submitResult.rank <= 3 && (
+            <div className="mt-4 px-8 py-3 rounded-2xl border-4 border-[#F08A3C] bg-[#F08A3C]/15 animate-pulse-glow text-center">
+              <p className="font-graffiti text-4xl text-[#F08A3C]">
+                {submitResult.rank === 1 ? "🥇 #1 ALL TIME" : submitResult.rank === 2 ? "🥈 #2" : "🥉 #3"}
+              </p>
             </div>
+          )}
+          {submitResult && submitResult.rank && submitResult.rank > 3 && (
+            <p className="text-[#F0E7D4]/70 mt-4 text-base">
+              global rank <span className="font-graffiti text-[#F08A3C] text-xl">#{submitResult.rank}</span>
+              {submitResult.best > score && (
+                <span className="text-[#F0E7D4]/40 text-sm"> · your best: {submitResult.best.toLocaleString()}</span>
+              )}
+            </p>
           )}
 
           <div className="flex gap-3 mt-6">
@@ -1233,15 +1392,19 @@ function angleDiff(a: number, b: number): number {
   return d;
 }
 
-function makeBuilding(x: number, y: number, w: number, h: number): Building {
-  const palettes: Array<[string, string]> = [
-    ["#A89A82", "#7B6E55"],
-    ["#C2B499", "#8C7E63"],
-    ["#9B8E76", "#665A45"],
-    ["#B5A98E", "#7E7257"],
-    ["#A6997D", "#76684F"],
-  ];
-  const p = palettes[Math.floor(Math.random() * palettes.length)];
+function makeBuilding(x: number, y: number, w: number, h: number, col = 0, row = 0): Building {
+  const zonePalettes: Record<string, Array<[string, string]>> = {
+    industrial: [["#7A8898", "#5A6878"], ["#8A9098", "#606878"], ["#6A7888", "#4A5868"]],
+    commercial:  [["#C47A5A", "#9A5A3A"], ["#D4896A", "#A46848"], ["#B86A4A", "#8A4A2A"]],
+    residential: [["#7A9A6A", "#5A7A4A"], ["#8AAA7A", "#6A8A5A"], ["#90A878", "#607848"]],
+    neon:        [["#6A4A8A", "#4A2A6A"], ["#7A5A9A", "#5A3A7A"], ["#5A3A7A", "#3A1A5A"]],
+  };
+  let zone = "industrial";
+  if (col >= 3 && row < 2) zone = "commercial";
+  else if (col < 3 && row >= 3) zone = "residential";
+  else if (col >= 3 && row >= 3) zone = "neon";
+  const zp = zonePalettes[zone];
+  const p = zp[Math.floor(Math.random() * zp.length)];
   return { x, y, w, h, color: p[0], roofColor: p[1] };
 }
 
@@ -1264,6 +1427,9 @@ function makeHuman(x: number, y: number): Human {
     shirt: colors[Math.floor(Math.random() * colors.length)],
     type, worth,
     walkPhase: Math.random() * Math.PI * 2,
+    spreadTimer: 0,
+    spreadRadius: 60,
+    spreadPulsePhase: Math.random() * Math.PI * 2,
   };
 }
 
@@ -1478,6 +1644,35 @@ function drawHuman(ctx: CanvasRenderingContext2D, h: Human): void {
   ctx.beginPath();
   ctx.ellipse(0, 13, 9, 4, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // Chain infection aura
+  if (h.infected) {
+    if (h.spreadTimer <= 0) {
+      const pulse = 0.5 + 0.5 * Math.sin(h.spreadPulsePhase);
+      ctx.beginPath();
+      ctx.arc(0, 0, 60 + pulse * 8, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(80,220,60,${0.25 + pulse * 0.2})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      ctx.stroke();
+    } else {
+      const warmupFrac = 1 - (h.spreadTimer / 3.5);
+      ctx.beginPath();
+      ctx.arc(0, 0, 30 + warmupFrac * 20, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(200,255,80,${warmupFrac * 0.3})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.stroke();
+    }
+    // Infection mist below feet
+    const mistGrad = ctx.createRadialGradient(0, 4, 2, 0, 4, 22);
+    mistGrad.addColorStop(0, "rgba(80,220,40,0.28)");
+    mistGrad.addColorStop(1, "rgba(80,220,40,0)");
+    ctx.beginPath();
+    ctx.arc(0, 4, 22, 0, Math.PI * 2);
+    ctx.fillStyle = mistGrad;
+    ctx.fill();
+  }
 
   if (h.infected) {
     // Infected: green sickly look with stagger
