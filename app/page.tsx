@@ -117,6 +117,7 @@ export default function Home() {
                     alt="ratwifhanta"
                     fill
                     priority
+                    unoptimized
                     sizes="(max-width: 640px) 300px, (max-width: 768px) 380px, 440px"
                     className="object-cover"
                   />
