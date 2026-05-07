@@ -157,6 +157,7 @@ export default function Game() {
   const lastPowerSpawnRef = useRef(0);
   const nextPowerSpawnDelayRef = useRef(POWERUP_SPAWN_INTERVAL_MIN);
   const sneezeBurstRef = useRef<{ until: number; angle: number } | null>(null);
+  const endGameRef = useRef<() => void>(() => {});
 
   // Load handle on mount
   useEffect(() => {
@@ -292,6 +293,7 @@ export default function Game() {
     const finalScore = scoreRef.current;
     if (savedHandle) submitToLeaderboard(savedHandle, finalScore);
   }, [submitToLeaderboard, savedHandle]);
+  endGameRef.current = endGame;
 
   // Keyboard
   useEffect(() => {
@@ -724,7 +726,7 @@ export default function Game() {
       const distSq = cdx * cdx + cdy * cdy;
       const minDist = (e.size / 2 + RAT_SIZE / 2 - 4) ** 2;
       if (distSq < minDist) {
-        if (!invincible) { endGame(); return; }
+        if (!invincible) { endGameRef.current(); return; }
       }
       if (distSq < 130 * 130 && now > alertCooldownRef.current) {
         sfx.alert();
