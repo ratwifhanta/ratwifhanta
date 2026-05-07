@@ -60,7 +60,7 @@ export default function TokenPage() {
       <section className="px-4 md:px-10 pb-16 max-w-5xl mx-auto">
         <div className="rounded-3xl border-4 border-[#1B1208] bg-[#1B1208] overflow-hidden">
           <iframe
-            src={`https://dexscreener.com/solana/${CONTRACT_ADDRESS}?embed=1&theme=dark&trades=0&info=0`}
+            src={`https://www.geckoterminal.com/solana/tokens/${CONTRACT_ADDRESS}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&chart_type=price&resolution=1s`}
             title="$RAT chart"
             className="w-full"
             style={{ height: "640px", border: 0 }}

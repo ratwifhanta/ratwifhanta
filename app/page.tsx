@@ -67,6 +67,11 @@ export default function Home() {
       {/* HERO SECTION */}
       <section className="relative z-10 px-4 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <div className="mx-auto max-w-6xl">
+          {/* Live contract address — sits above the rat logo */}
+          <div className="mb-8 md:mb-10 max-w-3xl mx-auto">
+            <ContractAddress variant="light" />
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
 
             {/* Left — text */}
@@ -106,10 +111,6 @@ export default function Home() {
                 >
                   Follow on X
                 </a>
-              </div>
-
-              <div className="mt-6 max-w-xl mx-auto lg:mx-0">
-                <ContractAddress variant="light" />
               </div>
             </div>
 
