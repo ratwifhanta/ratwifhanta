@@ -1,10 +1,9 @@
-import Link from "next/link";
-import Game from "@/components/Game";
+"use client";
 
-export const metadata = {
-  title: "Spread the Hanta · $RAT",
-  description: "play as the rat. infect the city. dodge the hazmat squad.",
-};
+import Link from "next/link";
+import dynamic from "next/dynamic";
+
+const Game3D = dynamic(() => import("@/components/Game3D"), { ssr: false });
 
 export default function PlayPage() {
   return (
@@ -17,7 +16,7 @@ export default function PlayPage() {
         ← Home
       </Link>
 
-      <Game />
+      <Game3D />
     </main>
   );
 }
