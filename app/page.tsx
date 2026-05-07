@@ -42,17 +42,25 @@ export default function Home() {
         <div className="font-graffiti text-2xl md:text-3xl text-[#1B1208] flex items-center gap-2">
           <span className="text-[#D8488A]">$</span>RAT
         </div>
-        <a
-          href="https://x.com/RatWifHanta"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-graffiti text-base md:text-xl text-[#1B1208] hover:text-[#D8488A] transition-colors flex items-center gap-2"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-          </svg>
-          @RatWifHanta
-        </a>
+        <nav className="flex items-center gap-5 md:gap-6">
+          <Link href="/leaderboard" className="font-graffiti text-base md:text-lg text-[#1B1208] hover:text-[#D8488A] transition-colors">
+            Leaderboard
+          </Link>
+          <Link href="/token" className="font-graffiti text-base md:text-lg text-[#1B1208] hover:text-[#D8488A] transition-colors">
+            Chart
+          </Link>
+          <a
+            href="https://x.com/RatWifHanta"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-graffiti text-base md:text-xl text-[#1B1208] hover:text-[#D8488A] transition-colors flex items-center gap-2"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+            @RatWifHanta
+          </a>
+        </nav>
       </header>
 
       {/* HERO SECTION */}

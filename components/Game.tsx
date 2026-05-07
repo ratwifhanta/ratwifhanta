@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { sfx, unlockAudio, startMusic, stopMusic, setMuted, isMuted } from "@/lib/audio";
 import Leaderboard from "@/components/Leaderboard";
 
-type Phase = "handle" | "title" | "playing" | "gameover";
+type Phase = "handle" | "title" | "howtoplay" | "playing" | "gameover";
 
 interface Vec { x: number; y: number; }
 
@@ -19,6 +19,7 @@ interface Human {
   shirt: string;
   type: "civilian" | "kid" | "scientist";
   worth: number;
+  walkPhase: number;
 }
 
 type EnemyType = "hazmat" | "cop" | "heli" | "boss";
@@ -73,9 +74,9 @@ const WORLD_W = 2400;
 const WORLD_H = 1800;
 const RAT_SPEED = 220;
 const HUMAN_SPEED = 50;
-const RAT_SIZE = 28;
-const HUMAN_SIZE = 22;
-const INFECT_RADIUS = 30;
+const RAT_SIZE = 38;
+const HUMAN_SIZE = 28;
+const INFECT_RADIUS = 38;
 const COMBO_WINDOW = 1500;
 
 const WAVE_DURATION = 30000;
@@ -256,8 +257,8 @@ export default function Game() {
     screenShakeRef.current = 0;
     screenFlashRef.current = { color: "#fff", alpha: 0 };
     sneezeBurstRef.current = null;
-    phaseRef.current = "playing";
-    setPhase("playing");
+    phaseRef.current = "howtoplay";
+    setPhase("howtoplay");
   }, [seedWorld, savedHandle]);
 
   const submitToLeaderboard = useCallback(async (handle: string, finalScore: number) => {
@@ -645,6 +646,9 @@ export default function Game() {
         h.vx *= 0.9; h.vy *= 0.9;
         h.x += Math.sin(now * 0.01 + h.x * 0.01) * 0.3;
       }
+      // advance walk cycle
+      const spd = Math.hypot(h.vx, h.vy);
+      h.walkPhase += dt * spd * 0.08;
     }
 
     if (comboRef.current > 0 && now - lastInfectRef.current > COMBO_WINDOW) {
@@ -747,7 +751,8 @@ export default function Game() {
     const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
     if (cssW === 0 || cssH === 0) return;
 
-    ctx.fillStyle = "#3D3A35";
+    // Asphalt base
+    ctx.fillStyle = "#3A3530";
     ctx.fillRect(0, 0, cssW, cssH);
 
     const cam = cameraRef.current;
@@ -759,15 +764,47 @@ export default function Game() {
     ctx.save();
     ctx.translate(-cam.x + shakeX, -cam.y + shakeY);
 
-    // Road grid
-    ctx.strokeStyle = "rgba(248, 230, 160, 0.5)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([18, 18]);
+    // Street base between buildings
+    ctx.fillStyle = "#2E2B26";
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    // Sidewalk areas (lighter strip around buildings)
     const cols = 6, rows = 5;
     const blockW = WORLD_W / cols, blockH = WORLD_H / rows;
+    const streetW = 70;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        // Sidewalk block
+        ctx.fillStyle = "#4A4540";
+        ctx.fillRect(c * blockW + 2, r * blockH + 2, blockW - 4, blockH - 4);
+        // Inner block (asphalt)
+        ctx.fillStyle = "#2E2B26";
+        ctx.fillRect(c * blockW + streetW - 10, r * blockH + streetW - 10, blockW - streetW * 2 + 20, blockH - streetW * 2 + 20);
+      }
+    }
+
+    // Center lane markings
+    ctx.strokeStyle = "rgba(248,230,120,0.55)";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([22, 20]);
     for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * blockH); ctx.lineTo(WORLD_W, r * blockH); ctx.stroke(); }
     for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * blockW, 0); ctx.lineTo(c * blockW, WORLD_H); ctx.stroke(); }
     ctx.setLineDash([]);
+
+    // Edge lane markings (solid white)
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        // Sidewalk edge lines
+        const sx = c * blockW + streetW - 12;
+        const sy = r * blockH + streetW - 12;
+        const ex = c * blockW + blockW - streetW + 12;
+        const ey = r * blockH + blockH - streetW + 12;
+        ctx.strokeRect(sx, sy, ex - sx, ey - sy);
+      }
+    }
 
     for (const b of buildingsRef.current) drawBuilding(ctx, b);
 
@@ -965,6 +1002,11 @@ export default function Game() {
     setMuteState(m);
   };
 
+  const startPlaying = useCallback(() => {
+    phaseRef.current = "playing";
+    setPhase("playing");
+  }, []);
+
   const submitHandle = () => {
     const h = handleInput.replace(/^@/, "").trim().toLowerCase();
     if (!/^[a-z0-9_]{1,15}$/.test(h)) return;
@@ -1008,6 +1050,76 @@ export default function Game() {
             className="mt-8 font-graffiti text-3xl md:text-4xl px-12 py-5 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] hover:scale-105 transition-all border-4 border-[#F0E7D4] animate-pulse-glow disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
             ▶ Continue
+          </button>
+        </div>
+      )}
+
+      {phase === "howtoplay" && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-start bg-[#1B1208]/95 backdrop-blur-sm overflow-y-auto py-8 px-4">
+          <h2 className="font-graffiti text-4xl md:text-6xl text-[#F0E7D4] text-center mt-4">
+            how to <span className="text-[#D8488A]">spread</span>
+          </h2>
+          <p className="text-[#F0E7D4]/60 text-sm mt-1">everything you need to know</p>
+
+          <div className="mt-8 w-full max-w-lg grid grid-cols-1 gap-4">
+            {/* Controls */}
+            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
+              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">🎮 controls</p>
+              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">WASD / ↑↓←→</span>
+                  <span>move the rat</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">SPACE</span>
+                  <span>sneeze — cone blast that infects humans in range</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono bg-[#F0E7D4]/15 px-2 py-1 rounded text-xs">drag</span>
+                  <span>mobile movement (touch joystick)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Scoring */}
+            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
+              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">📊 scoring</p>
+              <div className="flex flex-col gap-1 text-[#F0E7D4]/80 text-sm">
+                <div className="flex justify-between"><span>🧍 civilian</span><span className="font-graffiti text-[#F08A3C]">+1</span></div>
+                <div className="flex justify-between"><span>👶 kid</span><span className="font-graffiti text-[#F08A3C]">+2</span></div>
+                <div className="flex justify-between"><span>🥼 scientist</span><span className="font-graffiti text-[#F08A3C]">+3</span></div>
+                <p className="text-[#D8488A] mt-2 text-xs">infect multiple people within 1.5s to build a COMBO multiplier!</p>
+              </div>
+            </div>
+
+            {/* Power-ups */}
+            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
+              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">⚡ power-ups</p>
+              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
+                <div className="flex items-start gap-2"><span className="text-[#22D3EE]">⚡ SPEED</span><span className="text-[#F0E7D4]/60">(5s) — 65% speed boost</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#F08A3C]">💥 BURST</span><span className="text-[#F0E7D4]/60">instant wide-radius infection blast</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#D8488A]">🧲 MAGNET</span><span className="text-[#F0E7D4]/60">(5s) — humans walk toward you</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#FBBF24]">★ INVINC</span><span className="text-[#F0E7D4]/60">(4s) — enemies can&apos;t catch you</span></div>
+              </div>
+            </div>
+
+            {/* Enemies */}
+            <div className="bg-[#F0E7D4]/10 rounded-2xl border-2 border-[#F0E7D4]/20 p-5">
+              <p className="font-graffiti text-xl text-[#F08A3C] mb-3">☠️ enemies</p>
+              <div className="flex flex-col gap-2 text-[#F0E7D4]/80 text-sm">
+                <div className="flex items-start gap-2"><span className="text-[#F1C40F]">🟡 hazmat</span><span className="text-[#F0E7D4]/60">slow, predictable — always present</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#1E40AF]">🔵 cop</span><span className="text-[#F0E7D4]/60">fast straight-line chase — wave 2+</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#16A34A]">🟢 helicopter</span><span className="text-[#F0E7D4]/60">ignores buildings — wave 3+</span></div>
+                <div className="flex items-start gap-2"><span className="text-[#DC2626]">🔴 BOSS</span><span className="text-[#F0E7D4]/60">huge &amp; slow — score 1500+</span></div>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={startPlaying}
+            className="mt-8 mb-4 font-graffiti text-3xl md:text-4xl px-14 py-5 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] hover:scale-105 transition-all border-4 border-[#F0E7D4] animate-pulse-glow"
+          >
+            ✓ Ready!
           </button>
         </div>
       )}
@@ -1149,6 +1261,7 @@ function makeHuman(x: number, y: number): Human {
     color: colors[Math.floor(Math.random() * colors.length)],
     shirt: colors[Math.floor(Math.random() * colors.length)],
     type, worth,
+    walkPhase: Math.random() * Math.PI * 2,
   };
 }
 
@@ -1206,102 +1319,150 @@ function drawRat(
   ctx.translate(x, y);
   ctx.rotate(facing);
 
+  const t = performance.now();
+
   if (invincible) {
-    // Rainbow halo
     ctx.save();
-    const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 32);
-    grad.addColorStop(0, "rgba(251, 191, 36, 0.6)");
-    grad.addColorStop(1, "rgba(251, 191, 36, 0)");
+    const grad = ctx.createRadialGradient(0, 0, 6, 0, 0, 42);
+    grad.addColorStop(0, "rgba(251,191,36,0.65)");
+    grad.addColorStop(1, "rgba(251,191,36,0)");
     ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(0, 0, 32, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, 42, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
   if (speedy) {
-    // Speed lines behind
-    ctx.strokeStyle = "rgba(34, 211, 238, 0.85)";
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(34,211,238,0.9)";
+    ctx.lineWidth = 3;
     ctx.lineCap = "round";
-    for (let i = 0; i < 4; i++) {
-      const o = -22 - i * 6;
+    for (let i = 0; i < 5; i++) {
+      const o = -28 - i * 7;
       ctx.beginPath();
-      ctx.moveTo(o, -8 + i * 4);
-      ctx.lineTo(o - 12, -8 + i * 4);
+      ctx.moveTo(o, -10 + i * 5);
+      ctx.lineTo(o - 14, -10 + i * 5);
       ctx.stroke();
     }
   }
 
-  // Tail
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(3, 6, 20, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // TAIL — animated wiggle
+  const wiggle = Math.sin(t * 0.005) * 6;
   ctx.strokeStyle = "#8E7355";
-  ctx.lineWidth = 3.5;
+  ctx.lineWidth = 4.5;
   ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(-12, 0);
-  ctx.bezierCurveTo(-22, 4, -28, -6, -32, 2);
+  ctx.moveTo(-18, 2);
+  ctx.bezierCurveTo(-30, 4 + wiggle, -38, -8 + wiggle, -44, 2);
+  ctx.stroke();
+  // tail tip
+  ctx.strokeStyle = "#C8A07A";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-44, 2);
+  ctx.bezierCurveTo(-50, 4, -54, 0, -52, -4);
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  // BODY
+  ctx.fillStyle = "#BCA07A";
   ctx.beginPath();
-  ctx.ellipse(2, 4, 16, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 1, 20, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#D4B88A";
+  ctx.beginPath();
+  ctx.ellipse(-2, -1, 18, 11, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#C8A77A";
+  // HIND LEGS
+  ctx.fillStyle = "#BCA07A";
   ctx.beginPath();
-  ctx.ellipse(0, 0, 16, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(-10, 10, 7, 5, 0.4, 0, Math.PI * 2);
+  ctx.ellipse(0, 12, 6, 4, -0.2, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#C8A77A";
+  // HEAD
+  ctx.fillStyle = "#D4B88A";
   ctx.beginPath();
-  ctx.arc(11, 0, 9, 0, Math.PI * 2);
+  ctx.arc(14, 0, 12, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#A8896A";
+  // EAR LEFT
+  ctx.fillStyle = "#C09870";
   ctx.beginPath();
-  ctx.arc(8, -8, 4, 0, Math.PI * 2);
-  ctx.arc(8, 8, 4, 0, Math.PI * 2);
+  ctx.ellipse(10, -10, 5.5, 7, -0.4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#E8B8A8";
+  ctx.fillStyle = "#E8B0A0";
   ctx.beginPath();
-  ctx.arc(8, -8, 2, 0, Math.PI * 2);
-  ctx.arc(8, 8, 2, 0, Math.PI * 2);
+  ctx.ellipse(10, -10, 3, 4.5, -0.4, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#7DC0E6";
+  // EAR RIGHT
+  ctx.fillStyle = "#C09870";
   ctx.beginPath();
-  ctx.ellipse(15, 0, 4, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(18, -10, 5.5, 7, 0.4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#5A9CC2";
+  ctx.fillStyle = "#E8B0A0";
+  ctx.beginPath();
+  ctx.ellipse(18, -10, 3, 4.5, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // SNOUT
+  ctx.fillStyle = "#C09870";
+  ctx.beginPath();
+  ctx.ellipse(24, 2, 7, 5, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // NOSE
+  ctx.fillStyle = "#E890A0";
+  ctx.beginPath();
+  ctx.arc(28, 1, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // WHISKERS
+  ctx.strokeStyle = "rgba(255,255,255,0.7)";
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(15, -3);
-  ctx.lineTo(15, 3);
-  ctx.stroke();
+  [-2, 0, 2].forEach((oy) => {
+    ctx.beginPath(); ctx.moveTo(24, oy); ctx.lineTo(38, oy - 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(24, oy); ctx.lineTo(38, oy + 2); ctx.stroke();
+  });
 
+  // EYES
   ctx.fillStyle = "#1B1208";
   ctx.beginPath();
-  ctx.arc(12, -3, 1.5, 0, Math.PI * 2);
-  ctx.arc(12, 3, 1.5, 0, Math.PI * 2);
+  ctx.arc(15, -4, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.beginPath();
+  ctx.arc(16, -5, 1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Hanta hat
+  // HANTA VIRUS HAT — spiky particle on head
+  ctx.save();
+  ctx.translate(10, -8);
+  ctx.rotate(Math.sin(t * 0.003) * 0.15);
+  // crown
   ctx.fillStyle = "#D8488A";
   ctx.beginPath();
-  ctx.arc(2, 0, 11, 0, Math.PI * 2);
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
   ctx.fill();
+  // spikes
   ctx.fillStyle = "#F08A3C";
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    const sx = 2 + Math.cos(a) * 12;
-    const sy = Math.sin(a) * 12;
+    const sx = Math.cos(a) * 11;
+    const sy = Math.sin(a) * 11;
     ctx.beginPath();
-    ctx.arc(sx, sy, 2.6, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 2.8, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.fillStyle = "rgba(255,255,255,0.4)";
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.beginPath();
-  ctx.arc(-1, -3, 3, 0, Math.PI * 2);
+  ctx.arc(-2, -2, 2.5, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
   ctx.restore();
 }
@@ -1310,112 +1471,244 @@ function drawHuman(ctx: CanvasRenderingContext2D, h: Human): void {
   ctx.save();
   ctx.translate(h.x, h.y);
 
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
   ctx.beginPath();
-  ctx.ellipse(0, 8, 8, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 13, 9, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (h.infected) {
-    ctx.fillStyle = "#7DBA3B";
+    // Infected: green sickly look with stagger
+    const sway = Math.sin(h.walkPhase * 0.5) * 3;
+
+    // Legs (staggering)
+    ctx.strokeStyle = "#5A9A2A";
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.ellipse(0, 1, 7, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#A8DC55";
-    ctx.beginPath();
-    ctx.arc(0, -8, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#1B1208";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(-3, -10); ctx.lineTo(-1, -8);
-    ctx.moveTo(-1, -10); ctx.lineTo(-3, -8);
-    ctx.moveTo(1, -10); ctx.lineTo(3, -8);
-    ctx.moveTo(3, -10); ctx.lineTo(1, -8);
+    ctx.moveTo(-2, 3);
+    ctx.lineTo(-5 + sway, 13);
     ctx.stroke();
-    ctx.fillStyle = "rgba(216, 72, 138, 0.6)";
     ctx.beginPath();
-    ctx.arc(-6, -14, 1.5, 0, Math.PI * 2);
-    ctx.arc(6, -16, 1.2, 0, Math.PI * 2);
+    ctx.moveTo(2, 3);
+    ctx.lineTo(5 - sway, 13);
+    ctx.stroke();
+
+    // Body
+    ctx.fillStyle = "#6AAA28";
+    ctx.fillRect(-5, -5, 10, 10);
+
+    // Arms flailing
+    ctx.strokeStyle = "#5A9A2A";
+    ctx.lineWidth = 3;
+    const armSway = Math.sin(h.walkPhase) * 25;
+    ctx.beginPath();
+    ctx.moveTo(-5, -3);
+    const ang1 = (-Math.PI * 0.5) + armSway * 0.04;
+    ctx.lineTo(-5 + Math.cos(ang1) * 10, -3 + Math.sin(ang1) * 10);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(5, -3);
+    const ang2 = (-Math.PI * 0.5) - armSway * 0.04;
+    ctx.lineTo(5 + Math.cos(ang2) * 10, -3 + Math.sin(ang2) * 10);
+    ctx.stroke();
+
+    // Head
+    ctx.fillStyle = "#8AD040";
+    ctx.beginPath();
+    ctx.arc(0, -12, 8, 0, Math.PI * 2);
     ctx.fill();
-  } else {
-    // Body color depends on type
-    if (h.type === "kid") {
-      // Smaller body, bright shirt
-      ctx.fillStyle = h.color;
+    // Sick X eyes
+    ctx.strokeStyle = "#1B1208";
+    ctx.lineWidth = 1.8;
+    [[-3, -13], [3, -13]].forEach(([ex, ey]) => {
       ctx.beginPath();
-      ctx.ellipse(0, 1, 5, 6, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#FBD8B4";
-      ctx.beginPath();
-      ctx.arc(0, -7, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (h.type === "scientist") {
-      // White lab coat
-      ctx.fillStyle = "#F5F5F5";
-      ctx.beginPath();
-      ctx.ellipse(0, 1, 7, 9, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#1B1208";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, -2); ctx.lineTo(0, 5);
+      ctx.moveTo(ex - 1.5, ey - 1.5); ctx.lineTo(ex + 1.5, ey + 1.5);
+      ctx.moveTo(ex + 1.5, ey - 1.5); ctx.lineTo(ex - 1.5, ey + 1.5);
       ctx.stroke();
+    });
+    // Green drip
+    ctx.fillStyle = "#A0E050";
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 2, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // virus dots orbiting
+    const orbitT = performance.now() * 0.003;
+    ctx.fillStyle = "rgba(120,220,40,0.7)";
+    for (let i = 0; i < 3; i++) {
+      const a = orbitT + i * (Math.PI * 2 / 3);
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * 13, -11 + Math.sin(a) * 6, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else {
+    // Walking legs
+    const legSwing = Math.sin(h.walkPhase) * 6;
+    const s = h.type === "kid" ? 0.75 : 1;
+
+    ctx.strokeStyle = h.type === "scientist" ? "#888" : "#3D2A18";
+    ctx.lineWidth = 3.5 * s;
+    ctx.lineCap = "round";
+    // Left leg
+    ctx.beginPath();
+    ctx.moveTo(-3 * s, 4 * s);
+    ctx.lineTo(-3 * s + legSwing * 0.5, 13 * s);
+    ctx.stroke();
+    // Right leg
+    ctx.beginPath();
+    ctx.moveTo(3 * s, 4 * s);
+    ctx.lineTo(3 * s - legSwing * 0.5, 13 * s);
+    ctx.stroke();
+
+    // Feet
+    ctx.fillStyle = "#1B1208";
+    ctx.beginPath();
+    ctx.ellipse(-3 * s + legSwing * 0.5, 14 * s, 3.5 * s, 2 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(3 * s - legSwing * 0.5, 14 * s, 3.5 * s, 2 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (h.type === "scientist") {
+      // White lab coat body
+      ctx.fillStyle = "#F0F0F0";
+      ctx.fillRect(-7, -8, 14, 14);
+      // Coat lapels
+      ctx.strokeStyle = "#CCC";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -8); ctx.lineTo(0, 4);
+      ctx.stroke();
+      // Arms
+      ctx.strokeStyle = "#E0E0E0";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      const armSwing = Math.sin(h.walkPhase) * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(-7, -5);
+      ctx.lineTo(-12 + Math.cos(-Math.PI * 0.4 + armSwing) * 8, -5 + Math.sin(-Math.PI * 0.4 + armSwing) * 8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(7, -5);
+      ctx.lineTo(12 + Math.cos(-Math.PI * 0.6 - armSwing) * 8, -5 + Math.sin(-Math.PI * 0.6 - armSwing) * 8);
+      ctx.stroke();
+      // Head
       ctx.fillStyle = "#FBD8B4";
       ctx.beginPath();
-      ctx.arc(0, -8, 5.5, 0, Math.PI * 2);
+      ctx.arc(0, -16, 7, 0, Math.PI * 2);
       ctx.fill();
       // Glasses
-      ctx.strokeStyle = "#1B1208";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#555";
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.arc(-2, -8, 1.6, 0, Math.PI * 2);
-      ctx.arc(2, -8, 1.6, 0, Math.PI * 2);
-      ctx.moveTo(-0.4, -8); ctx.lineTo(0.4, -8);
+      ctx.arc(-3, -16, 2.2, 0, Math.PI * 2);
+      ctx.arc(3, -16, 2.2, 0, Math.PI * 2);
+      ctx.moveTo(-0.8, -16); ctx.lineTo(0.8, -16);
       ctx.stroke();
-    } else {
-      ctx.fillStyle = h.color;
+      // Hair
+      ctx.fillStyle = "#555";
       ctx.beginPath();
-      ctx.ellipse(0, 1, 6.5, 8, 0, 0, Math.PI * 2);
+      ctx.arc(0, -22, 4, 0, Math.PI, true);
       ctx.fill();
+    } else if (h.type === "kid") {
+      // Bright shirt
+      ctx.fillStyle = h.color;
+      ctx.fillRect(-5, -7, 10, 12);
+      // Arms
+      ctx.strokeStyle = h.shirt;
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = "round";
+      const armSwing = Math.sin(h.walkPhase) * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(-5, -5);
+      ctx.lineTo(-9 + Math.cos(-Math.PI * 0.5 + armSwing) * 7, -5 + Math.sin(-Math.PI * 0.5 + armSwing) * 7);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(5, -5);
+      ctx.lineTo(9 + Math.cos(-Math.PI * 0.5 - armSwing) * 7, -5 + Math.sin(-Math.PI * 0.5 - armSwing) * 7);
+      ctx.stroke();
+      // Head (slightly bigger for kid)
       ctx.fillStyle = "#FBD8B4";
       ctx.beginPath();
-      ctx.arc(0, -8, 5.5, 0, Math.PI * 2);
+      ctx.arc(0, -15, 6.5, 0, Math.PI * 2);
       ctx.fill();
-    }
-
-    ctx.fillStyle = "#1B1208";
-    if (h.panicLevel > 0.4) {
+      // Eyes
+      ctx.fillStyle = "#1B1208";
       ctx.beginPath();
-      ctx.arc(-2, -8, 1.8, 0, Math.PI * 2);
-      ctx.arc(2, -8, 1.8, 0, Math.PI * 2);
+      ctx.arc(-2, -16, 1, 0, Math.PI * 2);
+      ctx.arc(2, -16, 1, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.arc(-2, -8, 0.8, 0, Math.PI * 2);
-      ctx.arc(2, -8, 0.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#EF4444";
-      ctx.font = "bold 10px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText("!", 0, -16);
-      ctx.textAlign = "left";
-    } else if (h.type !== "scientist") {
-      ctx.beginPath();
-      ctx.arc(-2, -8, 1, 0, Math.PI * 2);
-      ctx.arc(2, -8, 1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    if (h.type === "kid") {
-      // Pigtail / sprout
+      if (h.panicLevel > 0.3) {
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(-2, -16, 0.5, 0, Math.PI * 2);
+        ctx.arc(2, -16, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#EF4444";
+        ctx.font = "bold 9px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("!", 0, -24);
+        ctx.textAlign = "left";
+      }
+      // Hair sprout
       ctx.fillStyle = "#3D2A18";
       ctx.beginPath();
-      ctx.arc(0, -12, 2.5, 0, Math.PI, true);
+      ctx.arc(0, -21, 3, 0, Math.PI, true);
       ctx.fill();
-    } else if (h.type !== "scientist") {
+    } else {
+      // Civilian
+      ctx.fillStyle = h.shirt;
+      ctx.fillRect(-7, -8, 14, 14);
+      // Belt line
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(-7, 2, 14, 2);
+      // Pants
+      ctx.fillStyle = h.color;
+      ctx.fillRect(-6, 4, 5, 6);
+      ctx.fillRect(1, 4, 5, 6);
+      // Arms
+      ctx.strokeStyle = h.shirt;
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      const armSwing = Math.sin(h.walkPhase) * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(-7, -5);
+      ctx.lineTo(-12 + Math.cos(-Math.PI * 0.5 + armSwing) * 9, -5 + Math.sin(-Math.PI * 0.5 + armSwing) * 9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(7, -5);
+      ctx.lineTo(12 + Math.cos(-Math.PI * 0.5 - armSwing) * 9, -5 + Math.sin(-Math.PI * 0.5 - armSwing) * 9);
+      ctx.stroke();
+      // Head
+      ctx.fillStyle = "#FBD8B4";
+      ctx.beginPath();
+      ctx.arc(0, -17, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      // Eyes
+      ctx.fillStyle = "#1B1208";
+      if (h.panicLevel > 0.4) {
+        ctx.beginPath();
+        ctx.arc(-3, -18, 2, 0, Math.PI * 2);
+        ctx.arc(3, -18, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(-3, -18, 0.9, 0, Math.PI * 2);
+        ctx.arc(3, -18, 0.9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#EF4444";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("!", 0, -27);
+        ctx.textAlign = "left";
+      } else {
+        ctx.beginPath();
+        ctx.arc(-3, -18, 1.2, 0, Math.PI * 2);
+        ctx.arc(3, -18, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Hair
       ctx.fillStyle = "#3D2A18";
       ctx.beginPath();
-      ctx.arc(0, -12, 3, 0, Math.PI, true);
+      ctx.arc(0, -23, 5, 0, Math.PI, true);
       ctx.fill();
     }
   }
@@ -1463,68 +1756,172 @@ function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy): void {
 }
 
 function drawHazmat(ctx: CanvasRenderingContext2D, e: Enemy): void {
+  const t = performance.now();
+  // Walk bob
+  const bob = Math.sin(t * 0.006) * 2;
+
+  // LEGS
+  ctx.strokeStyle = "#E0B500";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  const legSwing = Math.sin(t * 0.006) * 5;
+  ctx.beginPath();
+  ctx.moveTo(-4, 8 + bob); ctx.lineTo(-6 + legSwing, 18 + bob);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(4, 8 + bob); ctx.lineTo(6 - legSwing, 18 + bob);
+  ctx.stroke();
+
+  // BODY SUIT
   ctx.fillStyle = "#F1C40F";
   ctx.beginPath();
-  ctx.ellipse(0, 2, 10, 12, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2 + bob, 11, 13, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#1B1208";
-  ctx.fillRect(-10, 4, 20, 3);
+  // Suit seam / stripe
+  ctx.strokeStyle = "#C9A800";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -8 + bob); ctx.lineTo(0, 8 + bob);
+  ctx.stroke();
+  // Hazmat stripes
+  ctx.strokeStyle = "#FF6600";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-11, 0 + bob); ctx.lineTo(11, 0 + bob);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-10, 5 + bob); ctx.lineTo(10, 5 + bob);
+  ctx.stroke();
+
+  // ARMS
+  ctx.strokeStyle = "#F1C40F";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  const armSwing = Math.sin(t * 0.006) * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(-11, -3 + bob);
+  ctx.lineTo(-18 + Math.cos(-Math.PI * 0.5 + armSwing) * 9, -3 + bob + Math.sin(-Math.PI * 0.5 + armSwing) * 9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(11, -3 + bob);
+  ctx.lineTo(18 + Math.cos(-Math.PI * 0.5 - armSwing) * 9, -3 + bob + Math.sin(-Math.PI * 0.5 - armSwing) * 9);
+  ctx.stroke();
+
+  // HELMET
   ctx.fillStyle = "#F1C40F";
   ctx.beginPath();
-  ctx.arc(0, -9, 8, 0, Math.PI * 2);
+  ctx.arc(0, -11 + bob, 11, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "rgba(180, 220, 240, 0.85)";
+
+  // VISOR
+  ctx.fillStyle = "rgba(150,210,240,0.88)";
   ctx.beginPath();
-  ctx.arc(0, -9, 5.5, 0, Math.PI * 2);
+  ctx.ellipse(0, -11 + bob, 7, 6, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#1B1208";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = "#1B1208";
-  ctx.beginPath();
-  ctx.arc(-2, -9, 1, 0, Math.PI * 2);
-  ctx.arc(2, -9, 1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "#1B1208";
+  ctx.strokeStyle = "#C9A800";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.ellipse(0, 2, 10, 12, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, -11 + bob, 7, 6, 0, 0, Math.PI * 2);
   ctx.stroke();
+  // Visor reflection
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  ctx.beginPath();
+  ctx.ellipse(-2, -13 + bob, 2.5, 1.5, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // BREATHING FILTER (chin piece)
+  ctx.fillStyle = "#888";
+  ctx.beginPath();
+  ctx.ellipse(0, -5 + bob, 5, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#AAA";
+  ctx.beginPath();
+  ctx.arc(-3, -5 + bob, 1.5, 0, Math.PI * 2);
+  ctx.arc(3, -5 + bob, 1.5, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawCop(ctx: CanvasRenderingContext2D, e: Enemy): void {
-  // Blue uniform
-  ctx.fillStyle = "#1E40AF";
+  const t = performance.now();
+  const bob = Math.sin(t * 0.009) * 2;
+
+  // LEGS — fast stride (cop runs faster)
+  ctx.strokeStyle = "#162F80";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  const legSwing = Math.sin(t * 0.009) * 7;
   ctx.beginPath();
-  ctx.ellipse(0, 2, 9, 11, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Belt
-  ctx.fillStyle = "#1B1208";
-  ctx.fillRect(-9, 4, 18, 2.5);
+  ctx.moveTo(-4, 8 + bob); ctx.lineTo(-5 + legSwing, 18 + bob);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(4, 8 + bob); ctx.lineTo(5 - legSwing, 18 + bob);
+  ctx.stroke();
+
+  // UNIFORM BODY
+  ctx.fillStyle = "#1E40AF";
+  ctx.fillRect(-10, -8 + bob, 20, 18);
   // Badge
   ctx.fillStyle = "#FBBF24";
   ctx.beginPath();
-  ctx.arc(-4, -1, 1.6, 0, Math.PI * 2);
+  ctx.arc(-4, -2 + bob, 3.5, 0, Math.PI * 2);
   ctx.fill();
-  // Head + cap
+  ctx.fillStyle = "#B8860B";
+  ctx.font = "bold 4px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("★", -4, -1 + bob);
+  ctx.textAlign = "left";
+  // Belt
+  ctx.fillStyle = "#0A1855";
+  ctx.fillRect(-10, 6 + bob, 20, 3);
+
+  // ARMS
+  ctx.strokeStyle = "#1E40AF";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  const armSwing = Math.sin(t * 0.009) * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(-10, -4 + bob);
+  ctx.lineTo(-17 + Math.cos(-Math.PI * 0.5 + armSwing) * 9, -4 + bob + Math.sin(-Math.PI * 0.5 + armSwing) * 9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(10, -4 + bob);
+  ctx.lineTo(17 + Math.cos(-Math.PI * 0.5 - armSwing) * 9, -4 + bob + Math.sin(-Math.PI * 0.5 - armSwing) * 9);
+  ctx.stroke();
+
+  // HEAD
   ctx.fillStyle = "#FBD8B4";
   ctx.beginPath();
-  ctx.arc(0, -8, 6, 0, Math.PI * 2);
+  ctx.arc(0, -16 + bob, 8, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#1E40AF";
-  ctx.fillRect(-7, -14, 14, 5);
-  ctx.fillRect(-9, -10, 18, 1.5);
-  // Eyes (mean)
+
+  // Eyes — angry expression
   ctx.fillStyle = "#1B1208";
   ctx.beginPath();
-  ctx.arc(-2, -8, 1, 0, Math.PI * 2);
-  ctx.arc(2, -8, 1, 0, Math.PI * 2);
+  ctx.arc(-3, -17 + bob, 1.5, 0, Math.PI * 2);
+  ctx.arc(3, -17 + bob, 1.5, 0, Math.PI * 2);
   ctx.fill();
+  // Angry brows
   ctx.strokeStyle = "#1B1208";
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
-  ctx.ellipse(0, 2, 9, 11, 0, 0, Math.PI * 2);
+  ctx.moveTo(-5, -20 + bob); ctx.lineTo(-1, -19 + bob);
+  ctx.moveTo(1, -19 + bob); ctx.lineTo(5, -20 + bob);
   ctx.stroke();
+
+  // COP HAT
+  ctx.fillStyle = "#1E40AF";
+  ctx.beginPath();
+  ctx.ellipse(0, -22 + bob, 10, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#162F80";
+  ctx.fillRect(-7, -28 + bob, 14, 8);
+  ctx.fillStyle = "#1E40AF";
+  ctx.fillRect(-6, -29 + bob, 12, 8);
+  // Hat badge
+  ctx.fillStyle = "#FBBF24";
+  ctx.beginPath();
+  ctx.arc(0, -25 + bob, 2, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawHeli(ctx: CanvasRenderingContext2D, e: Enemy): void {
