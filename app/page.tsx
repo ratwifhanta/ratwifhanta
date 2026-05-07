@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import { ContractAddress } from "@/components/ContractAddress";
 
 export default function Home() {
   return (
@@ -105,6 +106,10 @@ export default function Home() {
                 >
                   Follow on X
                 </a>
+              </div>
+
+              <div className="mt-6 max-w-xl mx-auto lg:mx-0">
+                <ContractAddress variant="light" />
               </div>
             </div>
 

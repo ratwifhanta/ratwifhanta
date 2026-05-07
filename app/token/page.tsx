@@ -1,4 +1,10 @@
 import Link from "next/link";
+import {
+  ContractAddress,
+  CONTRACT_ADDRESS,
+  DEXSCREENER_URL,
+  PUMP_URL,
+} from "@/components/ContractAddress";
 
 export default function TokenPage() {
   return (
@@ -52,55 +58,52 @@ export default function TokenPage() {
 
       {/* Chart Area */}
       <section className="px-4 md:px-10 pb-16 max-w-5xl mx-auto">
-        <div className="rounded-3xl border-4 border-[#1B1208] bg-[#E8DCC4] overflow-hidden">
-          {/* Chart placeholder */}
-          <div className="flex flex-col items-center justify-center py-24 px-6 text-center gap-6">
-            <div className="text-6xl animate-bob">📈</div>
-            <h2 className="font-graffiti text-3xl md:text-4xl text-[#1B1208]">
-              chart coming soon
-            </h2>
-            <p className="text-[#3D2A18]/70 max-w-sm text-base leading-relaxed">
-              $RAT launches soon on Solana. the chart will appear here once the contract is live.
-            </p>
-            <div className="w-full max-w-sm bg-[#1B1208]/10 rounded-2xl border-2 border-[#1B1208]/20 p-4">
-              <p className="text-xs text-[#6E2410] uppercase tracking-widest mb-1">contract address</p>
-              <p className="font-mono text-[#1B1208]/40 text-sm">TBA on launch</p>
-            </div>
-          </div>
+        <div className="rounded-3xl border-4 border-[#1B1208] bg-[#1B1208] overflow-hidden">
+          <iframe
+            src={`https://dexscreener.com/solana/${CONTRACT_ADDRESS}?embed=1&theme=dark&trades=0&info=0`}
+            title="$RAT chart"
+            className="w-full"
+            style={{ height: "640px", border: 0 }}
+            allow="clipboard-write"
+          />
         </div>
 
-        {/* Stats placeholders */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          {[
-            { label: "price", value: "TBA" },
-            { label: "market cap", value: "TBA" },
-            { label: "holders", value: "TBA" },
-            { label: "chain", value: "SOLANA" },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded-2xl border-4 border-[#1B1208] bg-[#E8DCC4] p-4 text-center">
-              <p className="text-xs text-[#6E2410] uppercase tracking-widest mb-1">{label}</p>
-              <p className={`font-graffiti text-xl ${value === "TBA" ? "text-[#1B1208]/30" : "text-[#F08A3C]"}`}>
-                {value}
-              </p>
-            </div>
-          ))}
+        {/* Contract address bar */}
+        <div className="mt-6">
+          <ContractAddress variant="light" />
         </div>
 
         {/* Links */}
-        <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+        <div className="mt-6 flex flex-col sm:flex-row gap-4 justify-center flex-wrap">
           <a
-            href="https://x.com/RatWifHanta"
+            href={PUMP_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
+          >
+            buy on pump.fun
+          </a>
+          <a
+            href={DEXSCREENER_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-[#1B1208] text-[#F0E7D4] hover:bg-[#D8488A] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
           >
-            Follow @RatWifHanta
+            view on dexscreener
+          </a>
+          <a
+            href="https://x.com/RatWifHanta"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-transparent text-[#1B1208] hover:bg-[#1B1208] hover:text-[#F0E7D4] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
+          >
+            @RatWifHanta
           </a>
           <Link
             href="/play"
-            className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
+            className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-[#F08A3C] text-[#1B1208] hover:bg-[#D8488A] hover:text-[#F0E7D4] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
           >
-            ▶ Play Game
+            ▶ play game
           </Link>
         </div>
       </section>
