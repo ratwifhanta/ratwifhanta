@@ -439,7 +439,7 @@ function generateCity(): {
           const pz = blockZ - blockSize / 2 + subSize * (sz + 0.5);
           const w = subSize * (0.7 + rand() * 0.25);
           const d = subSize * (0.7 + rand() * 0.25);
-          const h = 4 + rand() * 14;
+          const h = 2.5 + rand() * 5.5;
           const pal = palette(px, pz);
           buildings.push({ x: px, z: pz, w, d, h, color: pal.c, windowColor: pal.w });
           obstacles.push({ x: px, z: pz, r: Math.max(w, d) / 2 + 0.3 });
@@ -537,16 +537,74 @@ function BuildingMesh({ b }: { b: Building }) {
 
   return (
     <group position={[b.x, b.h / 2, b.z]}>
-      <mesh castShadow receiveShadow>
+      <mesh castShadow receiveShadow userData={{ isBuilding: true }}>
         <boxGeometry args={[b.w, b.h, b.d]} />
-        <meshStandardMaterial map={tex} roughness={0.85} />
+        <meshStandardMaterial map={tex} roughness={0.85} transparent />
       </mesh>
-      <mesh position={[0, b.h / 2 + 0.3, 0]} castShadow>
+      <mesh position={[0, b.h / 2 + 0.3, 0]} castShadow userData={{ isBuilding: true }}>
         <boxGeometry args={[b.w * 0.3, 0.6, b.d * 0.3]} />
-        <meshStandardMaterial color="#3a3030" />
+        <meshStandardMaterial color="#3a3030" transparent />
       </mesh>
     </group>
   );
+}
+
+// Fade buildings that sit between the camera and the rat so the player can
+// always see their character.
+function OcclusionFader({
+  ratRef,
+}: {
+  ratRef: React.MutableRefObject<THREE.Group | null>;
+}) {
+  const { camera, scene } = useThree();
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  const dirVec = useMemo(() => new THREE.Vector3(), []);
+  const lastFaded = useRef<Set<THREE.Mesh>>(new Set());
+
+  useFrame(() => {
+    const rat = ratRef.current;
+    if (!rat) return;
+
+    // Cast a ray from camera toward rat
+    dirVec.copy(rat.position).sub(camera.position);
+    const ratDist = dirVec.length();
+    dirVec.normalize();
+    raycaster.set(camera.position, dirVec);
+    raycaster.far = ratDist - 0.5; // only consider stuff in front of the rat
+
+    // Collect candidate building meshes
+    const candidates: THREE.Mesh[] = [];
+    scene.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh && obj.userData?.isBuilding) {
+        candidates.push(obj as THREE.Mesh);
+      }
+    });
+    const hits = raycaster.intersectObjects(candidates, false);
+
+    const newFaded = new Set<THREE.Mesh>();
+    for (const hit of hits) {
+      const mesh = hit.object as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (mat) {
+        mat.opacity = 0.18;
+        mat.depthWrite = false;
+      }
+      newFaded.add(mesh);
+    }
+    // Restore previously faded that are no longer occluding
+    for (const mesh of lastFaded.current) {
+      if (!newFaded.has(mesh)) {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat) {
+          mat.opacity = 1;
+          mat.depthWrite = true;
+        }
+      }
+    }
+    lastFaded.current = newFaded;
+  });
+
+  return null;
 }
 
 function Tree({ x, z }: { x: number; z: number }) {
@@ -1097,23 +1155,43 @@ export default function Game3D(): React.ReactElement {
     setPhase("playing");
   }, [city.obstacles, selectedRatIdx, onScore, onCaught, spawnCop]);
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   // Submit score
-  const submitScore = useCallback(async () => {
-    if (!handle.trim() || submitted) return;
-    setSubmitted(true);
-    try {
-      window.localStorage.setItem("ratwifhanta:handle", handle.trim());
-    } catch {}
-    try {
-      await fetch("/api/leaderboard", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ handle: handle.trim(), score: endStats.score }),
-      });
-    } catch {
-      // ignore — leaderboard might not be configured locally
+  const submitScore = useCallback(
+    async (score: number): Promise<void> => {
+      const cleanHandle = handle.trim();
+      if (!cleanHandle || submitted) return;
+      setSubmitted(true);
+      setSubmitError(null);
+      try {
+        window.localStorage.setItem("ratwifhanta:handle", cleanHandle);
+      } catch {}
+      try {
+        const res = await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ handle: cleanHandle, score }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!data.ok) {
+          setSubmitError(data.error ?? "submission failed");
+          setSubmitted(false);
+        }
+      } catch (err) {
+        setSubmitError(String(err));
+        setSubmitted(false);
+      }
+    },
+    [handle, submitted]
+  );
+
+  // Auto-submit as soon as the game ends — players forget to click.
+  useEffect(() => {
+    if (phase === "gameover" && !submitted && handle.trim() && endStats.score > 0) {
+      void submitScore(endStats.score);
     }
-  }, [handle, submitted, endStats.score]);
+  }, [phase, submitted, handle, endStats.score, submitScore]);
 
   // Keyboard input
   useEffect(() => {
@@ -1192,6 +1270,7 @@ export default function Game3D(): React.ReactElement {
             <CopInstance key={`c-${i}`} data={c} index={i} />
           ))}
           <IsoCamera ratRef={ratRef} />
+          <OcclusionFader ratRef={ratRef} />
           {refsRef.current && phase === "playing" && (
             <GameController refs={refsRef.current} uiTickRef={uiTickRef} />
           )}
@@ -1296,28 +1375,45 @@ export default function Game3D(): React.ReactElement {
             {endStats.infected} infected · {endStats.time.toFixed(1)}s survived
           </p>
 
-          {!submitted ? (
-            <button
-              onClick={submitScore}
-              className="mt-6 font-graffiti text-xl px-8 py-3 rounded-xl bg-[#F08A3C] text-[#1B1208] hover:bg-[#D8488A] hover:text-[#F0E7D4] transition border-2 border-[#F0E7D4]"
-            >
-              submit to leaderboard
-            </button>
+          {submitted ? (
+            <p className="mt-6 text-[#78dc28] font-graffiti text-lg">
+              submitted to leaderboard ✓
+            </p>
+          ) : submitError ? (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <p className="text-[#F08A3C] text-sm">submit failed: {submitError}</p>
+              <button
+                onClick={() => submitScore(endStats.score)}
+                className="font-graffiti text-base px-5 py-2 rounded-xl bg-[#F08A3C] text-[#1B1208] hover:bg-[#D8488A] hover:text-[#F0E7D4] transition border-2 border-[#F0E7D4]"
+              >
+                retry submit
+              </button>
+            </div>
           ) : (
-            <p className="mt-6 text-[#78dc28] font-graffiti text-lg">submitted ✓</p>
+            <p className="mt-6 text-[#F0E7D4]/60 font-graffiti text-base animate-pulse">
+              submitting...
+            </p>
           )}
 
-          <div className="mt-6 flex gap-3">
+          <div className="mt-6 flex gap-3 flex-wrap justify-center">
             <button
               onClick={() => {
                 setPhase("title");
                 setHumansData([]);
                 setCopsData([]);
+                setSubmitted(false);
+                setSubmitError(null);
               }}
               className="font-graffiti text-2xl px-8 py-3 rounded-2xl bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] transition border-4 border-[#F0E7D4]"
             >
               ↻ try again
             </button>
+            <a
+              href="/leaderboard"
+              className="font-graffiti text-2xl px-8 py-3 rounded-2xl bg-[#1B1208] text-[#F0E7D4] hover:bg-[#F08A3C] hover:text-[#1B1208] transition border-4 border-[#F0E7D4]"
+            >
+              leaderboard ↗
+            </a>
           </div>
         </div>
       )}

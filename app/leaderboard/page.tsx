@@ -14,16 +14,38 @@ const MEDALS = ["🥇", "🥈", "🥉"];
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [mode, setMode] = useState<"global" | "ephemeral">("ephemeral");
 
+  const load = async (silent = false): Promise<void> => {
+    if (!silent) setRefreshing(true);
+    try {
+      const res = await fetch("/api/leaderboard", { cache: "no-store" });
+      const d = await res.json();
+      setEntries(d.entries ?? []);
+      setMode(d.mode ?? "ephemeral");
+    } catch {
+      // ignore — keep last good data
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    fetch("/api/leaderboard")
-      .then((r) => r.json())
-      .then((d) => {
-        setEntries(d.entries ?? []);
-        setMode(d.mode ?? "ephemeral");
-      })
-      .finally(() => setLoading(false));
+    void load();
+    // Auto-refresh every 5 seconds so new scores appear without a manual reload
+    const id = window.setInterval(() => void load(true), 5000);
+    // Refresh whenever the tab becomes visible again
+    const onVis = (): void => {
+      if (document.visibilityState === "visible") void load(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -78,6 +100,16 @@ export default function LeaderboardPage() {
             ephemeral mode — scores reset on server restart
           </p>
         )}
+        <div className="mt-4">
+          <button
+            onClick={() => void load()}
+            disabled={refreshing}
+            className="font-graffiti text-sm px-4 py-2 rounded-full bg-[#1B1208]/10 text-[#1B1208] hover:bg-[#1B1208] hover:text-[#F0E7D4] transition disabled:opacity-50"
+          >
+            {refreshing ? "refreshing…" : "↻ refresh"}
+          </button>
+          <span className="ml-3 text-[#1B1208]/40 text-xs">auto-refreshes every 5s</span>
+        </div>
       </section>
 
       {/* Table */}
