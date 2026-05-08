@@ -4,6 +4,7 @@ import {
   CONTRACT_ADDRESS,
   DEXSCREENER_URL,
   PUMP_URL,
+  BIRDEYE_URL,
 } from "@/components/ContractAddress";
 
 export default function TokenPage() {
@@ -58,18 +59,35 @@ export default function TokenPage() {
 
       {/* Chart Area */}
       <section className="px-4 md:px-10 pb-16 max-w-5xl mx-auto">
-        <div className="rounded-3xl border-4 border-[#1B1208] bg-[#1B1208] overflow-hidden">
+        <div className="rounded-3xl border-4 border-[#1B1208] bg-[#1B1208] overflow-hidden relative">
           <iframe
-            src={`https://www.geckoterminal.com/solana/tokens/${CONTRACT_ADDRESS}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&chart_type=price&resolution=1s`}
-            title="$RAT chart"
+            src={`https://dexscreener.com/solana/${CONTRACT_ADDRESS}?embed=1&theme=dark&trades=0&info=0`}
+            title="$RAT chart on DexScreener"
             className="w-full"
             style={{ height: "640px", border: 0 }}
             allow="clipboard-write"
           />
+          {/* Fallback overlay — visible until DexScreener renders. The iframe
+              paints over this once the chart loads. */}
+          <div className="absolute inset-0 pointer-events-none flex items-end justify-center pb-6">
+            <a
+              href={PUMP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="pointer-events-auto font-graffiti text-base px-5 py-2 rounded-full bg-[#D8488A] text-[#F0E7D4] hover:bg-[#F08A3C] transition border-2 border-[#F0E7D4] shadow-lg"
+            >
+              live 1s chart on pump.fun ↗
+            </a>
+          </div>
         </div>
 
+        <p className="text-center text-[#3D2A18]/60 text-sm mt-3">
+          chart populates from on-chain data; if it&apos;s blank we just
+          launched — open the live 1s chart on pump.fun above.
+        </p>
+
         {/* Contract address bar */}
-        <div className="mt-6">
+        <div className="mt-6 flex justify-center">
           <ContractAddress variant="light" />
         </div>
 
@@ -89,15 +107,15 @@ export default function TokenPage() {
             rel="noopener noreferrer"
             className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-[#1B1208] text-[#F0E7D4] hover:bg-[#D8488A] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
           >
-            view on dexscreener
+            dexscreener
           </a>
           <a
-            href="https://x.com/RatWifHanta"
+            href={BIRDEYE_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="font-graffiti text-xl px-8 py-4 rounded-2xl bg-transparent text-[#1B1208] hover:bg-[#1B1208] hover:text-[#F0E7D4] transition-all border-4 border-[#1B1208] text-center hover:scale-105"
           >
-            @RatWifHanta
+            birdeye
           </a>
           <Link
             href="/play"

@@ -68,7 +68,7 @@ export default function Home() {
       <section className="relative z-10 px-4 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <div className="mx-auto max-w-6xl">
           {/* Live contract address — sits above the rat logo */}
-          <div className="mb-8 md:mb-10 max-w-3xl mx-auto">
+          <div className="mb-6 md:mb-8 flex justify-center">
             <ContractAddress variant="light" />
           </div>
 
@@ -91,8 +91,9 @@ export default function Home() {
               </p>
 
               <p className="text-base md:text-lg text-[#3D2A18] max-w-xl mx-auto lg:mx-0 mb-10 leading-relaxed">
-                a lab rat broke containment. now he&apos;s wearing the hanta virus
-                like a hat and roaming the city. you&apos;re here to help him spread.
+                patient zero is a rat in a crochet hat. he&apos;s coughing on
+                solana, infecting wallets one block at a time, and he didn&apos;t
+                ask for permission.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-4 items-center justify-center lg:justify-start">
